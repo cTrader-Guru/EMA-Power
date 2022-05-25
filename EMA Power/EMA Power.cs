@@ -256,7 +256,7 @@ namespace cAlgo
             return thisBar.Close > thisBar.Open;
 
         }
-  
+
         public static bool IsBearish(this Bar thisBar)
         {
 
