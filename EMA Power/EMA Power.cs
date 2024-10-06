@@ -687,7 +687,7 @@ namespace cAlgo.Robots
 
         public const string NAME = "EMA Power";
 
-        public const string VERSION = "1.0.2";
+        public const string VERSION = "1.0.3";
 
         #endregion
 
