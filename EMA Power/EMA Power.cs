@@ -1038,7 +1038,7 @@ namespace cAlgo.Robots
 
             _ghostPositions.Remove(ghost);
 
-            if (_closingAll) return;
+            if (_closingAll || (CloseAllAt > 0 && Server.Time.ToDouble() >= CloseAllAt)) return;
 
             // P&L ghost: usa il valore registrato al momento del trigger SL/TP,
             // oppure stima dall'inverso della posizione reale chiusa
