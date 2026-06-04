@@ -740,6 +740,8 @@ namespace cAlgo.Robots
 
         public DateTime PreventGlitch;
 
+        private bool _closingAll = false;
+
         #endregion
 
         #region cBot Events
@@ -817,8 +819,14 @@ namespace cAlgo.Robots
             if (CloseAllAt > 0 && Server.Time.ToDouble() >= CloseAllAt)
             {
 
+                _closingAll = true;
+
                 foreach (var position in Positions.FindAll(MyLabel, SymbolName))
                     position.Close();
+
+                ConsecutiveLoss = 0;
+                CumulativeLoss = 0;
+                _closingAll = false;
 
                 return;
 
@@ -915,6 +923,9 @@ namespace cAlgo.Robots
 
             Position position = eventArgs.Position;
             if (position.SymbolName != SymbolName || position.Label != MyLabel)
+                return;
+
+            if (_closingAll || (CloseAllAt > 0 && Server.Time.ToDouble() >= CloseAllAt))
                 return;
 
             if (PreventGlitch == Server.Time)
