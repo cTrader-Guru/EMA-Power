@@ -738,7 +738,8 @@ namespace cAlgo.Robots
             public double GetNetProfit(Symbol symbol)
             {
 
-                double currentPrice = TradeType == TradeType.Buy ? symbol.Bid : symbol.Ask;
+                // Ghost Buy usa Ask, Ghost Sell usa Bid: mirror esatto del P&L della posizione reale inversa
+                double currentPrice = TradeType == TradeType.Buy ? symbol.Ask : symbol.Bid;
                 double priceDiff = TradeType == TradeType.Buy
                     ? currentPrice - EntryPrice
                     : EntryPrice - currentPrice;
@@ -749,11 +750,26 @@ namespace cAlgo.Robots
 
         }
 
+        // Pending limit order in attesa di fill, associato a un futuro ghost
+        private class PendingGhost
+        {
+
+            public int PendingOrderId { get; set; }
+            public TradeType GhostType { get; set; }
+            public double Quantity { get; set; }
+            public double VolumeInUnits { get; set; }
+
+        }
+
         public bool OpenedInThisBar = false;
 
         public double StrategyNetProfit = 0;
 
         private readonly List<GhostPosition> _ghostPositions = new List<GhostPosition>();
+
+        private readonly List<PendingGhost> _pendingGhosts = new List<PendingGhost>();
+
+        private PendingGhost _nextOpenIsGhost = null;
 
         private bool _closingAll = false;
 
@@ -779,7 +795,7 @@ namespace cAlgo.Robots
         {
 
             bool UsingRecovery = UseDM && DMMultiplier > 0 && ConsecutiveLoss > 0;
-            bool SharedConditions = !UsingRecovery && !OpenedInThisBar && _ghostPositions.Count < MaxTrades && Bars.LastGAP(Symbol.Digits) <= Symbol.PipsToDigits(GAP) && Symbol.RealSpread() <= SpreadToTrigger;
+            bool SharedConditions = !UsingRecovery && !OpenedInThisBar && (_ghostPositions.Count + _pendingGhosts.Count) < MaxTrades && Bars.LastGAP(Symbol.Digits) <= Symbol.PipsToDigits(GAP) && Symbol.RealSpread() <= SpreadToTrigger;
 
             if (Buy && Sell)
             {
@@ -799,8 +815,7 @@ namespace cAlgo.Robots
                 if (SharedConditions && MyOpenTradeType != Extensions.OpenTradeType.Sell)
                 {
 
-                    OpenGhostPosition(TradeType.Buy, volumeInUnits, lotSize, useRange: true);
-                    Print("Ghost Buy on trigger, consecutive loss {0}", ConsecutiveLoss);
+                    PlaceGhostPending(TradeType.Buy, volumeInUnits, lotSize);
 
                 }
 
@@ -811,8 +826,7 @@ namespace cAlgo.Robots
                 if (SharedConditions && MyOpenTradeType != Extensions.OpenTradeType.Buy)
                 {
 
-                    OpenGhostPosition(TradeType.Sell, volumeInUnits, lotSize, useRange: true);
-                    Print("Ghost Sell on trigger, consecutive loss {0}", ConsecutiveLoss);
+                    PlaceGhostPending(TradeType.Sell, volumeInUnits, lotSize);
 
                 }
 
@@ -827,6 +841,7 @@ namespace cAlgo.Robots
 
             Positions.Opened += OnOpenPositions;
             Positions.Closed += OnClosePositions;
+            PendingOrders.Filled += OnPendingOrderFilled;
 
             StrategyInitialize();
 
@@ -839,6 +854,15 @@ namespace cAlgo.Robots
             {
 
                 _closingAll = true;
+
+                foreach (var pg in _pendingGhosts)
+                {
+                    foreach (var o in PendingOrders)
+                    {
+                        if (o.Id == pg.PendingOrderId) { CancelPendingOrder(o); break; }
+                    }
+                }
+                _pendingGhosts.Clear();
 
                 foreach (var ghost in _ghostPositions)
                 {
@@ -939,6 +963,16 @@ namespace cAlgo.Robots
 
             OpenedInThisBar = false;
 
+            // Cancella pending ghost non riempiti nella barra precedente
+            foreach (var pg in _pendingGhosts)
+            {
+                foreach (var o in PendingOrders)
+                {
+                    if (o.Id == pg.PendingOrderId) { CancelPendingOrder(o); break; }
+                }
+            }
+            _pendingGhosts.Clear();
+
         }
 
         protected override void OnStop()
@@ -946,12 +980,55 @@ namespace cAlgo.Robots
 
             Positions.Opened -= OnOpenPositions;
             Positions.Closed -= OnClosePositions;
+            PendingOrders.Filled -= OnPendingOrderFilled;
 
         }
 
         #endregion
 
         #region Methods
+
+        private void PlaceGhostPending(TradeType ghostType, double volumeInUnits, double quantity)
+        {
+
+            TradeType realType = ghostType == TradeType.Buy ? TradeType.Sell : TradeType.Buy;
+            double limitPrice = realType == TradeType.Sell ? Ask : Bid;
+
+            var result = PlaceLimitOrder(realType, SymbolName, volumeInUnits, limitPrice, MyLabel, 0, 0);
+
+            if (result.IsSuccessful)
+            {
+                _pendingGhosts.Add(new PendingGhost
+                {
+                    PendingOrderId = result.PendingOrder.Id,
+                    GhostType = ghostType,
+                    Quantity = quantity,
+                    VolumeInUnits = volumeInUnits
+                });
+                Print("Ghost {0} pending → Real {1} limit {2:F2}", ghostType, realType, limitPrice);
+            }
+            else
+            {
+                Print("Ghost pending FAILED: {0}", result.Error);
+            }
+
+        }
+
+        private void OnPendingOrderFilled(PendingOrderFilledEventArgs args)
+        {
+
+            PendingGhost pg = null;
+            foreach (var p in _pendingGhosts)
+            {
+                if (p.PendingOrderId == args.PendingOrder.Id) { pg = p; break; }
+            }
+
+            if (pg == null) return;
+
+            _pendingGhosts.Remove(pg);
+            _nextOpenIsGhost = pg;
+
+        }
 
         private void OpenGhostPosition(TradeType ghostType, double volumeInUnits, double quantity, bool useRange = false)
         {
@@ -1013,6 +1090,21 @@ namespace cAlgo.Robots
                 return;
 
             OpenedInThisBar = true;
+
+            if (_nextOpenIsGhost != null)
+            {
+                _ghostPositions.Add(new GhostPosition
+                {
+                    TradeType = _nextOpenIsGhost.GhostType,
+                    EntryPrice = position.EntryPrice,
+                    EntryTime = Server.Time,
+                    Quantity = _nextOpenIsGhost.Quantity,
+                    VolumeInUnits = _nextOpenIsGhost.VolumeInUnits,
+                    RealPositionId = position.Id
+                });
+                Print("Ghost {0} creato da pending fill | entry {1:F2} (spread annullato)", _nextOpenIsGhost.GhostType, position.EntryPrice);
+                _nextOpenIsGhost = null;
+            }
 
         }
 
