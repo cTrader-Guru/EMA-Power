@@ -275,13 +275,6 @@ namespace cAlgo
 
         #region Symbol
 
-        public static double DigitsToPips(this Symbol thisSymbol, double Pips)
-        {
-
-            return Math.Round(Pips / thisSymbol.PipSize, 2);
-
-        }
-
         public static double PipsToDigits(this Symbol thisSymbol, double Pips)
         {
 
@@ -371,116 +364,6 @@ namespace cAlgo
             string nowMinute = (thisDateTime.Minute < 10) ? string.Format("0{0}", thisDateTime.Minute) : string.Format("{0}", thisDateTime.Minute);
 
             return string.Format("{0}.{1}", nowHour, nowMinute).ToDouble(Culture);
-
-        }
-
-        #endregion
-
-        #region Position
-
-        public static TradeResult BreakEven(this Position thisPosition, Symbol Symbol, double Activation, double Distance)
-        {
-
-            if (Activation == 0)
-                return null;
-
-            double breakeven;
-            double distance = Symbol.PipsToDigits(Distance);
-            double activation = Symbol.PipsToDigits(Activation);
-
-            TradeResult result = null;
-
-            switch (thisPosition.TradeType)
-            {
-
-                case TradeType.Buy:
-
-                    breakeven = Math.Round(thisPosition.EntryPrice + distance, Symbol.Digits);
-
-                    if (thisPosition.StopLoss == breakeven || thisPosition.TakeProfit == breakeven)
-                        break;
-
-                    if (Symbol.Bid > breakeven && Symbol.Bid >= thisPosition.EntryPrice + activation && (thisPosition.StopLoss == null || thisPosition.StopLoss < breakeven))
-                    {
-
-                        result = thisPosition.ModifyStopLossPrice(breakeven);
-
-                    }
-
-                    break;
-
-                case TradeType.Sell:
-
-                    breakeven = Math.Round(thisPosition.EntryPrice - distance, Symbol.Digits);
-
-                    if (thisPosition.StopLoss == breakeven || thisPosition.TakeProfit == breakeven)
-                        break;
-
-                    if (Symbol.Bid < breakeven && Symbol.Ask <= thisPosition.EntryPrice - activation && (thisPosition.StopLoss == null || thisPosition.StopLoss > breakeven))
-                    {
-
-                        result = thisPosition.ModifyStopLossPrice(breakeven);
-
-                    }
-
-                    break;
-
-            }
-
-            return result;
-
-        }
-
-        public static TradeResult TrailingStop(this Position thisPosition, Symbol Symbol, double Activation, double Distance)
-        {
-
-            if (Activation == 0)
-                return null;
-
-            double trailing;
-            double distance = Symbol.PipsToDigits(Distance);
-            double activation = Symbol.PipsToDigits(Activation);
-
-            TradeResult result = null;
-
-            switch (thisPosition.TradeType)
-            {
-
-                case TradeType.Buy:
-
-                    trailing = Math.Round(Symbol.Bid - distance, Symbol.Digits);
-
-                    if (thisPosition.StopLoss == trailing || thisPosition.TakeProfit == trailing)
-                        break;
-
-                    if ((Symbol.Bid >= (thisPosition.EntryPrice + activation)) && (thisPosition.StopLoss == null || thisPosition.StopLoss < trailing))
-                    {
-
-                        result = thisPosition.ModifyStopLossPrice(trailing);
-
-                    }
-
-                    break;
-
-                case TradeType.Sell:
-
-                    trailing = Math.Round(Symbol.Ask + distance, Symbol.Digits);
-
-                    if (thisPosition.StopLoss == trailing || thisPosition.TakeProfit == trailing)
-                        break;
-
-                    if ((Symbol.Ask <= (thisPosition.EntryPrice - activation)) && (thisPosition.StopLoss == null || thisPosition.StopLoss > trailing))
-                    {
-
-                        result = thisPosition.ModifyStopLossPrice(trailing);
-
-                    }
-
-                    break;
-
-            }
-
-            return result;
 
         }
 
@@ -711,27 +594,14 @@ namespace cAlgo.Robots
         [Parameter("Open Trade Type", Group = "Strategy", DefaultValue = Extensions.OpenTradeType.Buy)]
         public Extensions.OpenTradeType MyOpenTradeType { get; set; }
 
-        [Parameter("Stop Loss", Group = "Strategy", DefaultValue = 30, MinValue = 0, Step = 0.1)]
-        public double StopLoss { get; set; }
+        [Parameter("Stop Loss (money)", Group = "Strategy", DefaultValue = 30, MinValue = 0.1, Step = 0.1)]
+        public double StopLossMoney { get; set; }
 
-        [Parameter("Take Profit R:R 1:?", Group = "Strategy", DefaultValue = 5, MinValue = 0, Step = 0.1)]
-        public double TakeProfitRR { get; set; }
-
-        public double TakeProfit
-        {
-
-
-            get { return Math.Round(StopLoss * TakeProfitRR, 1); }
-        }
+        [Parameter("Take Profit (money)", Group = "Strategy", DefaultValue = 150, MinValue = 0.1, Step = 0.1)]
+        public double TakeProfitMoney { get; set; }
 
         [Parameter("Close On Trigger?", Group = "Strategy", DefaultValue = false)]
         public bool CloseOnTrigger { get; set; }
-
-        [Parameter("Use BreakEven?", Group = "Strategy", DefaultValue = false)]
-        public bool UseBreakEven { get; set; }
-
-        [Parameter("Use Trailing?", Group = "Strategy", DefaultValue = false)]
-        public bool UseTrailing { get; set; }
 
         [Parameter("Use Deviation Martingala? (bypass all)", Group = "Strategy", DefaultValue = true)]
         public bool UseDM { get; set; }
@@ -739,6 +609,9 @@ namespace cAlgo.Robots
         #endregion
 
         #region Pausa
+
+        [Parameter("Close All At (20.59 = 20:59, 0 = disabled)", Group = "Pause", DefaultValue = 0, MinValue = 0, MaxValue = 23.59, Step = 0.01)]
+        public double CloseAllAt { get; set; }
 
         [Parameter("From (18.0 = 18:00)", Group = "Pause", DefaultValue = 0, MinValue = 0, MaxValue = 23.59, Step = 0.01)]
         public double PauseFrom { get; set; }
@@ -833,26 +706,6 @@ namespace cAlgo.Robots
 
         #endregion
 
-        #region BreakEven
-
-        [Parameter("Activation (zero = disabled)", Group = "Break Even", DefaultValue = 10, MinValue = 0, Step = 0.1)]
-        public double BreakEvenActivation { get; set; }
-
-        [Parameter("Distance", Group = "Break Even", DefaultValue = 1.1, MinValue = 0, Step = 0.1)]
-        public double BreakEvenDistance { get; set; }
-
-        #endregion
-
-        #region Trailing
-
-        [Parameter("Activation (zero = disabled)", Group = "Trailing", DefaultValue = 15, MinValue = 0, Step = 0.1)]
-        public double TrailingActivation { get; set; }
-
-        [Parameter("Distance", Group = "Trailing", DefaultValue = 10, MinValue = 1, Step = 0.1)]
-        public double TrailingDistance { get; set; }
-
-        #endregion
-
         #region Deviation Martingala
 
         [Parameter("Multiplier (zero = disabled)", Group = "Deviation Martingala", DefaultValue = 1.5, MinValue = 0, Step = 0.1)]
@@ -878,6 +731,12 @@ namespace cAlgo.Robots
         Extensions.MonenyManagement MonenyManagement1;
 
         public int ConsecutiveLoss = 0;
+
+        public double CumulativeLoss = 0;
+
+        public double MaxProfit = 0;
+
+        public double MaxLoss = 0;
 
         public DateTime PreventGlitch;
 
@@ -907,7 +766,7 @@ namespace cAlgo.Robots
 
             }
 
-            MonenyManagement1 = new Extensions.MonenyManagement(Account, MyCapital, MyRisk, FixedLots, FakeSL > 0 ? FakeSL : StopLoss, Symbol);
+            MonenyManagement1 = new Extensions.MonenyManagement(Account, MyCapital, MyRisk, FixedLots, FakeSL, Symbol);
             double lotSize = MonenyManagement1.GetLotSize();
 
             double volumeInUnits = Symbol.QuantityToVolumeInUnits(lotSize);
@@ -918,7 +777,7 @@ namespace cAlgo.Robots
                 if (SharedConditions && MyOpenTradeType != Extensions.OpenTradeType.Sell)
                 {
 
-                    ExecuteMarketRangeOrder(TradeType.Buy, SymbolName, volumeInUnits, 2, Ask, MyLabel, StopLoss, TakeProfit);
+                    ExecuteMarketRangeOrder(TradeType.Buy, SymbolName, volumeInUnits, 2, Ask, MyLabel, 0, 0);
                     Print("Open on trigger, consecutive loss {0}", ConsecutiveLoss);
 
                 }
@@ -930,7 +789,7 @@ namespace cAlgo.Robots
                 if (SharedConditions && MyOpenTradeType != Extensions.OpenTradeType.Buy)
                 {
 
-                    ExecuteMarketRangeOrder(TradeType.Sell, SymbolName, volumeInUnits, 2, Bid, MyLabel, StopLoss, TakeProfit);
+                    ExecuteMarketRangeOrder(TradeType.Sell, SymbolName, volumeInUnits, 2, Bid, MyLabel, 0, 0);
                     Print("Open on trigger, consecutive loss {0}", ConsecutiveLoss);
 
                 }
@@ -955,6 +814,16 @@ namespace cAlgo.Robots
         protected override void OnTick()
         {
 
+            if (CloseAllAt > 0 && Server.Time.ToDouble() >= CloseAllAt)
+            {
+
+                foreach (var position in Positions.FindAll(MyLabel, SymbolName))
+                    position.Close();
+
+                return;
+
+            }
+
             bool OnMoneyTargetClose = MoneyTargetPercentage > 0 && StrategyPositions.Length >= MoneyTargetTrades && StrategyNetProfit >= MoneyTarget;
 
             double DDControl = Math.Round((Account.Balance / 100) * DDPercentage, 2) * -1;
@@ -969,10 +838,22 @@ namespace cAlgo.Robots
             foreach (Position position in StrategyPositions)
             {
 
+                bool OnSLClose = position.NetProfit <= -StopLossMoney;
+                bool OnTPClose = position.NetProfit >= (CumulativeLoss + TakeProfitMoney);
+
+                if (OnSLClose || OnTPClose)
+                {
+
+                    position.Close();
+                    continue;
+
+                }
+
                 if (!UsingRecovery)
                 {
 
                     bool OnTriggerClose = CloseOnTrigger && ((Buy && position.TradeType == TradeType.Sell) || (Sell && position.TradeType == TradeType.Buy));
+
                     if (OnTriggerClose || OnMoneyTargetClose || OnDrawDownClose)
                     {
 
@@ -981,62 +862,15 @@ namespace cAlgo.Robots
 
                     }
 
-                    TradeResult result;
-                    if (UseBreakEven)
-                    {
-
-                        result = position.BreakEven(Symbol, BreakEvenActivation, BreakEvenDistance);
-
-                        if (result != null)
-                        {
-
-                            if (result.IsSuccessful)
-                            {
-
-                                // --> Break Even successfully modified!!!
-
-                            }
-                            else
-                            {
-
-                                // --> Print("Error: {0}", result.Error);
-
-                            }
-
-                        }
-
-                    }
-
-                    if (UseTrailing)
-                    {
-
-                        result = position.TrailingStop(Symbol, TrailingActivation, TrailingDistance);
-
-                        if (result != null)
-                        {
-
-                            if (result.IsSuccessful)
-                            {
-
-                                // --> TrailingStop successfully modified!!!
-
-                            }
-                            else
-                            {
-
-                                // --> Print("Error: {0}", result.Error);
-
-                            }
-
-                        }
-
-                    }
-
                 }
 
                 StrategyNetProfit += position.NetProfit;
 
             }
+
+            double currentDelta = Account.Equity - Account.Balance;
+            if (currentDelta > MaxProfit) MaxProfit = currentDelta;
+            if (currentDelta < -MaxLoss) MaxLoss = -currentDelta;
 
             StrategyRun();
 
@@ -1054,6 +888,13 @@ namespace cAlgo.Robots
 
             Positions.Opened -= OnOpenPositions;
             Positions.Closed -= OnClosePositions;
+
+            Print("=== STATS ===");
+            Print("Max Profit      : +{0:F2}", MaxProfit);
+            Print("Max Loss        : -{0:F2}", MaxLoss);
+            Print("=============");
+
+
         }
 
         #endregion
@@ -1090,6 +931,7 @@ namespace cAlgo.Robots
             {
 
                 ConsecutiveLoss++;
+                CumulativeLoss += Math.Abs(position.NetProfit);
 
                 bool UseRecovery = UseDM && DMMultiplier > 0 && (DMMaxLoss == 0 || ConsecutiveLoss < DMMaxLoss);
 
@@ -1098,16 +940,17 @@ namespace cAlgo.Robots
 
                     TradeType reversed = (position.TradeType == TradeType.Sell) ? TradeType.Buy : TradeType.Sell;
 
-                    double tmpSL = position.StopLoss == null ? 0 : Math.Abs(Math.Round(position.EntryPrice - (double)position.StopLoss, Symbol.Digits));
+                    double newVolume = Symbol.QuantityToVolumeInUnits(Math.Round(position.Quantity * DMMultiplier, 2));
 
-                    ExecuteMarketOrder(reversed, SymbolName, Symbol.QuantityToVolumeInUnits(Math.Round(position.Quantity * DMMultiplier, 2)), MyLabel, Symbol.DigitsToPips(tmpSL), Symbol.DigitsToPips(tmpSL));
-                    Print("Open Martingala Deviation, consecutive loss {0}", ConsecutiveLoss);
+                    ExecuteMarketOrder(reversed, SymbolName, newVolume, MyLabel, 0, 0);
+                    Print("Open Martingala Deviation, consecutive loss {0}, cumulative loss {1}", ConsecutiveLoss, CumulativeLoss);
 
                 }
                 else
                 {
 
                     ConsecutiveLoss = 0;
+                    CumulativeLoss = 0;
 
                 }
 
@@ -1116,6 +959,7 @@ namespace cAlgo.Robots
             {
 
                 ConsecutiveLoss = 0;
+                CumulativeLoss = 0;
 
             }
 
