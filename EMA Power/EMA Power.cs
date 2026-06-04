@@ -607,6 +607,9 @@ namespace cAlgo.Robots
         [Parameter("Use Deviation Martingala? (bypass all)", Group = "Strategy", DefaultValue = true)]
         public bool UseDM { get; set; }
 
+        [Parameter("Use Ghost Mode?", Group = "Strategy", DefaultValue = true)]
+        public bool UseGhost { get; set; }
+
         #endregion
 
         #region Pausa
@@ -795,7 +798,10 @@ namespace cAlgo.Robots
         {
 
             bool UsingRecovery = UseDM && DMMultiplier > 0 && ConsecutiveLoss > 0;
-            bool SharedConditions = !UsingRecovery && !OpenedInThisBar && (_ghostPositions.Count + _pendingGhosts.Count) < MaxTrades && Bars.LastGAP(Symbol.Digits) <= Symbol.PipsToDigits(GAP) && Symbol.RealSpread() <= SpreadToTrigger;
+            int openCount = UseGhost
+                ? (_ghostPositions.Count + _pendingGhosts.Count)
+                : Positions.FindAll(MyLabel, SymbolName).Length;
+            bool SharedConditions = !UsingRecovery && !OpenedInThisBar && openCount < MaxTrades && Bars.LastGAP(Symbol.Digits) <= Symbol.PipsToDigits(GAP) && Symbol.RealSpread() <= SpreadToTrigger;
 
             if (Buy && Sell)
             {
@@ -815,7 +821,10 @@ namespace cAlgo.Robots
                 if (SharedConditions && MyOpenTradeType != Extensions.OpenTradeType.Sell)
                 {
 
-                    PlaceGhostPending(TradeType.Buy, volumeInUnits, lotSize);
+                    if (UseGhost)
+                        PlaceGhostPending(TradeType.Buy, volumeInUnits, lotSize);
+                    else
+                        ExecuteMarketOrder(TradeType.Buy, SymbolName, volumeInUnits, MyLabel, 0, 0);
 
                 }
 
@@ -826,7 +835,10 @@ namespace cAlgo.Robots
                 if (SharedConditions && MyOpenTradeType != Extensions.OpenTradeType.Buy)
                 {
 
-                    PlaceGhostPending(TradeType.Sell, volumeInUnits, lotSize);
+                    if (UseGhost)
+                        PlaceGhostPending(TradeType.Sell, volumeInUnits, lotSize);
+                    else
+                        ExecuteMarketOrder(TradeType.Sell, SymbolName, volumeInUnits, MyLabel, 0, 0);
 
                 }
 
@@ -855,29 +867,52 @@ namespace cAlgo.Robots
 
                 _closingAll = true;
 
-                foreach (var pg in _pendingGhosts)
+                if (UseGhost)
                 {
-                    foreach (var o in PendingOrders)
+                    foreach (var pg in _pendingGhosts)
                     {
-                        if (o.Id == pg.PendingOrderId) { CancelPendingOrder(o); break; }
+                        foreach (var o in PendingOrders)
+                        {
+                            if (o.Id == pg.PendingOrderId) { CancelPendingOrder(o); break; }
+                        }
                     }
-                }
-                _pendingGhosts.Clear();
+                    _pendingGhosts.Clear();
 
-                foreach (var ghost in _ghostPositions)
-                {
-                    double exitPrice = ghost.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask;
-                    DrawGhostLine(ghost, exitPrice, ghost.GetNetProfit(Symbol));
+                    foreach (var ghost in _ghostPositions)
+                    {
+                        double exitPrice = ghost.TradeType == TradeType.Buy ? Symbol.Ask : Symbol.Bid;
+                        DrawGhostLine(ghost, exitPrice, ghost.GetNetProfit(Symbol));
+                    }
                 }
 
                 foreach (var position in Positions.FindAll(MyLabel, SymbolName))
                     position.Close();
 
-                _ghostPositions.Clear();
+                if (UseGhost) _ghostPositions.Clear();
                 ConsecutiveLoss = 0;
                 CumulativeLoss = 0;
                 _closingAll = false;
 
+                return;
+
+            }
+
+            if (!UseGhost)
+            {
+
+                bool usingRecoveryNG = UseDM && DMMultiplier > 0 && ConsecutiveLoss > 0;
+                foreach (var pos in Positions.FindAll(MyLabel, SymbolName))
+                {
+
+                    bool onSL = pos.NetProfit <= -StopLossMoney;
+                    bool onTP = pos.NetProfit >= (CumulativeLoss + TakeProfitMoney);
+
+                    if (onSL || onTP)
+                        pos.Close();
+
+                }
+
+                StrategyRun();
                 return;
 
             }
@@ -908,7 +943,7 @@ namespace cAlgo.Robots
                 {
 
                     ghost.FinalNetProfit = ghostNetProfit;
-                    ghost.ExitPrice = ghost.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask;
+                    ghost.ExitPrice = ghost.TradeType == TradeType.Buy ? Symbol.Ask : Symbol.Bid;
                     ghostsToClose.Add(ghost);
                     continue;
 
@@ -923,7 +958,7 @@ namespace cAlgo.Robots
                     {
 
                         ghost.FinalNetProfit = ghostNetProfit;
-                        ghost.ExitPrice = ghost.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask;
+                        ghost.ExitPrice = ghost.TradeType == TradeType.Buy ? Symbol.Ask : Symbol.Bid;
                         ghostsToClose.Add(ghost);
                         continue;
 
@@ -1115,6 +1150,52 @@ namespace cAlgo.Robots
             if (position.SymbolName != SymbolName || position.Label != MyLabel)
                 return;
 
+            if (!UseGhost)
+            {
+
+                if (_closingAll || (CloseAllAt > 0 && Server.Time.ToDouble() >= CloseAllAt)) return;
+
+                double netProfit = position.NetProfit;
+
+                if (netProfit < 0)
+                {
+
+                    ConsecutiveLoss++;
+                    CumulativeLoss += Math.Abs(netProfit);
+
+                    bool useRecovery = UseDM && DMMultiplier > 0 && (DMMaxLoss == 0 || ConsecutiveLoss < DMMaxLoss);
+
+                    if (useRecovery)
+                    {
+
+                        TradeType nextType = position.TradeType == TradeType.Buy ? TradeType.Sell : TradeType.Buy;
+                        double newQty = Math.Round(Symbol.VolumeInUnitsToQuantity(position.VolumeInUnits) * DMMultiplier, 2);
+                        double newVol = Symbol.QuantityToVolumeInUnits(newQty);
+                        ExecuteMarketOrder(nextType, SymbolName, newVol, MyLabel, 0, 0);
+                        Print("Martingala Deviation, consecutive loss {0}, cumulative loss {1}", ConsecutiveLoss, CumulativeLoss);
+
+                    }
+                    else
+                    {
+
+                        ConsecutiveLoss = 0;
+                        CumulativeLoss = 0;
+
+                    }
+
+                }
+                else
+                {
+
+                    ConsecutiveLoss = 0;
+                    CumulativeLoss = 0;
+
+                }
+
+                return;
+
+            }
+
             // Trova il ghost agganciato alla posizione reale chiusa
             GhostPosition ghost = null;
             foreach (var g in _ghostPositions)
@@ -1140,7 +1221,7 @@ namespace cAlgo.Robots
 
             double exitPrice = ghost.ExitPrice.HasValue
                 ? ghost.ExitPrice.Value
-                : (ghost.TradeType == TradeType.Buy ? Symbol.Bid : Symbol.Ask);
+                : (ghost.TradeType == TradeType.Buy ? Symbol.Ask : Symbol.Bid);
 
             DrawGhostLine(ghost, exitPrice, ghostFinalProfit);
 
